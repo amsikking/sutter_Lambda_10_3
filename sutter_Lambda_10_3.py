@@ -5,8 +5,8 @@ class Controller:
     Basic device adaptor for Sutter Lambda 10-3 pptical filter changer and
     SmartShutter® control system. Many more commands are available and have
     not been implemented.
-    - Note: to enable serial communicaion use the front of the controller to
-    set the default communications port = serial (press: MODE 7 1 4 2)
+    - Note: to enable serial communication use the front of the controller to
+    set the default port to 'S' (press: LOCAL -> MODE -> 7 1 4 2 0 + restart)
     '''
     def __init__(self, which_port, name='Lambda 10-3', verbose=True):
         self.name = name
