@@ -50,7 +50,7 @@ class Controller:
     def move(self, position, wheel=0, speed=6, block=True): # speed=6 = reliable
         assert wheel in self.wheels
         if self._pending_cmd[wheel] is not None:
-            self._finish_moving(wheel)
+            self._finish_moving()
         assert position in range(self.position_max[wheel])
         assert speed in range(8)
         if self.verbose:
@@ -60,14 +60,23 @@ class Controller:
         self.port.write(cmd)
         self._pending_cmd[wheel] = cmd
         if block:
-            self._finish_moving(wheel)
+            self._finish_moving()
         return None
 
-    def _finish_moving(self, wheel=0):
-        if self._pending_cmd[wheel] is None:
-            returns
+    def _finish_moving(self):
+        if all(cmd is None for cmd in self._pending_cmd):
+            return
         response = self.port.read(2)
-        if response != self._pending_cmd[wheel] + b'\r':
+        # check which wheel the response corresonds to:
+        wheel = None
+        crash = True
+        for w in self.wheels:
+            if self._pending_cmd[w] is not None:
+                if response == self._pending_cmd[w] + b'\r':
+                    wheel = w
+                    crash = False
+                    break
+        if crash: # the response does not match a _pending_cmd
             print('%s: response =', response)
             raise IOError('%s: unexpected response'%self.name)
         self.position[wheel] = self._pending_cmd[wheel][0] & 0b00001111
@@ -120,19 +129,19 @@ if __name__ == '__main__':
         print('(time: %0.4fs)'%(time.perf_counter() - t0))
         print('(do something else...)')
         print('# Finish call:')
-        filter_wheel._finish_moving(wheel)
+        filter_wheel._finish_moving()
         print('(time: %0.4fs, including prints)\n'%(time.perf_counter() - t0))
 
 ##    print('\n# Non blocking call with 2 wheels:')
 ##    for i in range(10):
 ##        t0 = time.perf_counter()
-##        filter_wheel.move(1, wheel=0, block=False)
+##        filter_wheel.move(6, wheel=0, block=False) # move to 6 is slower...
 ##        filter_wheel.move(1, wheel=1, block=False)
 ##        print('(time: %0.4fs)'%(time.perf_counter() - t0))
 ##        print('(do something else...)')
 ##        print('# Finish call:')
-##        filter_wheel._finish_moving(0) # the order matters, first wheel first...
-##        filter_wheel._finish_moving(1)
+##        filter_wheel._finish_moving()
+##        filter_wheel._finish_moving()
 ##        print('(time: %0.4fs, including prints)\n'%(time.perf_counter() - t0))
 ##        for wheel in filter_wheel.wheels:
 ##            filter_wheel.move(0, wheel=wheel) # reset
