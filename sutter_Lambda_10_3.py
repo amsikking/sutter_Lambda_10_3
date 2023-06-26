@@ -8,57 +8,78 @@ class Controller:
     - Note: to enable serial communication use the front of the controller to
     set the default port to 'S' (press: LOCAL -> MODE -> 7 1 4 2 0 + restart)
     '''
-    def __init__(self, which_port, name='Lambda 10-3', verbose=True):
+    def __init__(self,
+                 which_port,
+                 wheel_A='LB10-NWE',
+                 wheel_B=None,
+                 name='Lambda 10-3',
+                 verbose=True):
         self.name = name
         self.verbose = verbose
-        if self.verbose: print(
-            '%s: opening with "Wheel A" = 10 position 25mm...'%self.name,
-            end='')
+        if self.verbose:
+            print('%s: opening with wheel_A = %s and wheel_B = %s '%(
+                self.name, wheel_A, wheel_B))
         try:
             self.port = serial.Serial(port=which_port, timeout=5)
         except serial.serialutil.SerialException:
             raise IOError('%s: unable to connect on %s'%(
                 self.name, which_port))
         self.port.write(b'\xFD') # get controller type and configuration
-        response = self.port.readline()
-        if response != b'\xfd10-3WA-25WB-NCWC-NCSA-VSSB-VS\r':
-            print('%s: response ='%self.name, response)
-            raise IOError("%s: configuration no supported"%self.name)
-        if self.verbose: print('done.')
-        self._pending_cmd = None
-        self.move(0) # use as shutter
+        configuration = self.port.readline()
+        if self.verbose:
+            print('%s: configuration = %s'%(self.name, configuration))
+        if wheel_A == 'LB10-NWE' and wheel_B == None:
+            assert configuration == b'\xfd10-3WA-25WB-NCWC-NCSA-VSSB-VS\r',(
+                "%s: configuration not supported"%self.name)
+            self.wheels =       (0,)
+            self.position_max = (10,)
+            self.position =     [None]
+            self._pending_cmd = [None]
+            self.move(0) # use as shutter
+        if wheel_A == 'LB10-NWE' and wheel_B == 'LB10-NWE':
+            assert configuration == b'\xfd10-3WA-25WB-25WC-NCSA-VSSB-VS\r',(
+                "%s: configuration not supported"%self.name)
+            self.wheels =       (0, 1)
+            self.position_max = (10, 10)
+            self._pending_cmd = [None, None]
+            self.position =     [None, None]
+            for wheel in self.wheels:
+                self.move(0, wheel=wheel) # use as shutter
+        if self.verbose: print('%s: done opening'%self.name)
 
     def move(self, position, wheel=0, speed=6, block=True): # speed=6 = reliable
-        if self._pending_cmd is not None:
-            self._finish_moving()
-        assert position in range(10)
+        assert wheel in self.wheels
+        if self._pending_cmd[wheel] is not None:
+            self._finish_moving(wheel)
+        assert position in range(self.position_max[wheel])
         assert speed in range(8)
-        assert wheel == 0
         if self.verbose:
             print('%s: moving wheel %i to position %i (speed=%i)'%(
                 self.name, wheel, position, speed))
         cmd = bytes([(wheel << 7) + (speed << 4) + position])
         self.port.write(cmd)
-        self._pending_cmd = cmd
+        self._pending_cmd[wheel] = cmd
         if block:
-            self._finish_moving()
+            self._finish_moving(wheel)
         return None
 
-    def _finish_moving(self):
-        if self._pending_cmd is None:
-            return
+    def _finish_moving(self, wheel=0):
+        if self._pending_cmd[wheel] is None:
+            returns
         response = self.port.read(2)
-        if response != self._pending_cmd + b'\r':
+        if response != self._pending_cmd[wheel] + b'\r':
             print('%s: response =', response)
             raise IOError('%s: unexpected response'%self.name)
-        assert self.port.in_waiting == 0
-        self.position = self._pending_cmd[0] & 0b00001111
-        self._pending_cmd = None
+        self.position[wheel] = self._pending_cmd[wheel][0] & 0b00001111
+        self._pending_cmd[wheel] = None
+        if all(cmd is None for cmd in self._pending_cmd):
+            assert self.port.in_waiting == 0
         if self.verbose: print('%s: -> finished moving.'%self.name)
         return None
 
     def close(self):
-        self.move(0) # use as shutter
+        for wheel in self.wheels:
+            self.move(0, wheel=wheel) # use as shutter
         self.port.close()
         if self.verbose: print('%s: closed.'%self.name)
         return None
@@ -66,45 +87,73 @@ class Controller:
 if __name__ == '__main__':
     import time
     import random
-    filter_wheel = Controller(which_port='COM5')
+
+    # test 1 wheel (1x LB10-NWE):
+    filter_wheel = Controller(
+        which_port='COM9', wheel_A='LB10-NWE', verbose=True)
+
+##    # test 2 wheels (2x LB10-NWE):
+##    filter_wheel = Controller(
+##        which_port='COM9', wheel_A='LB10-NWE', wheel_B='LB10-NWE', verbose=True)
 
     # performance tests:
-    print('\n#Filter wheel position = ', filter_wheel.position)
+    for wheel in filter_wheel.wheels:
+        print('\n#Filter wheel %i position = %i'%(
+            wheel, filter_wheel.position[wheel]))
 
     print('\n# Adjacent (fastest) move:')
-    start = time.perf_counter()
-    filter_wheel.move(1)
-    print('(time: %0.4fs)'%(time.perf_counter() - start))
+    for wheel in filter_wheel.wheels:
+        t0 = time.perf_counter()
+        filter_wheel.move(1, wheel=wheel)
+        print('(time: %0.4fs)'%(time.perf_counter() - t0))
 
     print('\n# Opposite (slowest) move:')
-    start = time.perf_counter()
-    filter_wheel.move(6)
-    print('(time: %0.4fs)'%(time.perf_counter() - start))    
+    for wheel in filter_wheel.wheels:
+        t0 = time.perf_counter()
+        filter_wheel.move(6, wheel=wheel)
+        print('(time: %0.4fs)'%(time.perf_counter() - t0))    
 
     print('\n# Non blocking call:')
-    start = time.perf_counter()
-    filter_wheel.move(0, block=False)
-    print('(time: %0.4fs)'%(time.perf_counter() - start))
-    print('(do something else...)')
-    print('# Finish call:')
-    filter_wheel._finish_moving()
-    print('(time: %0.4fs, including prints)\n'%(time.perf_counter() - start))
+    for wheel in filter_wheel.wheels:
+        t0 = time.perf_counter()
+        filter_wheel.move(0, wheel=wheel, block=False)
+        print('(time: %0.4fs)'%(time.perf_counter() - t0))
+        print('(do something else...)')
+        print('# Finish call:')
+        filter_wheel._finish_moving(wheel)
+        print('(time: %0.4fs, including prints)\n'%(time.perf_counter() - t0))
+
+##    print('\n# Non blocking call with 2 wheels:')
+##    for i in range(10):
+##        t0 = time.perf_counter()
+##        filter_wheel.move(1, wheel=0, block=False)
+##        filter_wheel.move(1, wheel=1, block=False)
+##        print('(time: %0.4fs)'%(time.perf_counter() - t0))
+##        print('(do something else...)')
+##        print('# Finish call:')
+##        filter_wheel._finish_moving(0) # the order matters, first wheel first...
+##        filter_wheel._finish_moving(1)
+##        print('(time: %0.4fs, including prints)\n'%(time.perf_counter() - t0))
+##        for wheel in filter_wheel.wheels:
+##            filter_wheel.move(0, wheel=wheel) # reset
 
 ##    # reliability tests:
 ##    moves = 100
-##    for i in range(moves):
-##        position = i%10
-##        filter_wheel.move(position)
-##    for i in range(moves):
-##        position = random.randint(0, 9)
-##        filter_wheel.move(position)
+##    for wheel in filter_wheel.wheels:
+##        filter_wheel.verbose = True
+##        for i in range(moves):
+##            position = i%10
+##            filter_wheel.move(position, wheel=wheel)
+##        for i in range(moves):
+##            position = random.randint(0, 9)
+##            filter_wheel.move(position, wheel=wheel)
 ##
-##    filter_wheel.verbose = False
-##    for i in range(moves):
-##        position = i%10
-##        filter_wheel.move(position)
-##    for i in range(moves):
-##        position = random.randint(0, 9)
-##        filter_wheel.move(position)
+##        filter_wheel.verbose = False
+##        for i in range(moves):
+##            position = i%10
+##            filter_wheel.move(position, wheel=wheel)
+##        for i in range(moves):
+##            position = random.randint(0, 9)
+##            filter_wheel.move(position, wheel=wheel)
 
     filter_wheel.close()
