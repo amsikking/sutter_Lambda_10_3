@@ -20,12 +20,12 @@ class Controller:
             print('%s: opening with wheel_A = %s and wheel_B = %s '%(
                 self.name, wheel_A, wheel_B))
         try:
-            self.port = serial.Serial(port=which_port, timeout=5)
+            self.port = serial.Serial(port=which_port, timeout=1)
         except serial.serialutil.SerialException:
             raise IOError('%s: unable to connect on %s'%(
                 self.name, which_port))
         self.port.write(b'\xFD') # get controller type and configuration
-        configuration = self.port.readline()
+        configuration = self.port.read_until(b'\r')
         if self.verbose:
             print('%s: configuration = %s'%(self.name, configuration))
         if wheel_A == 'LB10-NWE' and wheel_B == None:
